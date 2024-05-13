@@ -25,7 +25,7 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	data := map[string]any{"a": 1, "b": "asd"}
+	data := map[string]any{"number": 1, "text": "test"}
 	b, _ := json.Marshal(data)
 	msg := pb.MessageRequest{Queue: "tasks", Data: b}
 
