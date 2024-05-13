@@ -29,7 +29,6 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("opening grpc stream: %w", err)
 	}
-	time.Sleep(5 * time.Second)
 
 	stream.Send(&pb.MessageStreamRequest{Queue: "tasks"})
 

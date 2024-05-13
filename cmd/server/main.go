@@ -24,13 +24,19 @@ func (s *server) PublishMessage(ctx context.Context, in *pb.MessageRequest) (*pb
 
 func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 	ctx := srv.Context()
-	listener := make(messages.Listener)
+	var listener *messages.Listener
+	defer func() {
+		if listener == nil {
+			return
+		}
+		s.broadcaster.RemoveListener(listener)
+	}()
 
+	// TODO: This select doesn't bring any value, Recv needs to be a channel
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		fmt.Println("Waiting for the first message")
 		req, err := srv.Recv()
 		if err != nil {
 			if err == io.EOF {
@@ -39,22 +45,24 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 			return err
 		}
 
-		c, err := s.broadcaster.ReadMessages(req, listener)
+		listener = messages.NewListener(messages.Queue(req.Queue))
+		err = s.broadcaster.ReadMessages(listener)
 		if err != nil {
 			return err
 		}
-
-		listener = c
 	}
 
-	for msg := range listener {
-		err := srv.Send(msg)
-		if err != nil {
-			return fmt.Errorf("sending message: %w", err)
+	for {
+		select {
+		case msg := <-listener.Chan:
+			err := srv.Send(msg)
+			if err != nil {
+				return fmt.Errorf("sending message: %w", err)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
-
-	return nil
 }
 
 func run() error {

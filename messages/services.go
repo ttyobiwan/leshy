@@ -8,19 +8,33 @@ import (
 )
 
 type (
-	Queue    string
-	Listener chan *pb.MessageStreamResponse
+	Queue string
+	// Listener chan *pb.MessageStreamResponse
 )
+
+type Listener struct {
+	ID    string
+	Queue Queue
+	Chan  chan *pb.MessageStreamResponse
+}
+
+func NewListener(queue Queue) *Listener {
+	return &Listener{
+		uuid.New().String(),
+		queue,
+		make(chan *pb.MessageStreamResponse),
+	}
+}
 
 type MessageBroadcaster struct {
 	storage   *DistributedSQLStorage
-	listeners map[Queue][]Listener
+	listeners map[Queue][]*Listener
 }
 
 func NewMessageBroadcaster() *MessageBroadcaster {
 	return &MessageBroadcaster{
 		storage:   NewDistributedSQLStorage(),
-		listeners: make(map[Queue][]Listener),
+		listeners: make(map[Queue][]*Listener),
 	}
 }
 
@@ -39,7 +53,7 @@ func (mb *MessageBroadcaster) PublishMessage(rq *pb.MessageRequest) (*pb.Message
 		go func() {
 			fmt.Println("Sending to listeners")
 			for _, listener := range listeners {
-				listener <- &pb.MessageStreamResponse{Id: id, Data: rq.Data}
+				listener.Chan <- &pb.MessageStreamResponse{Id: id, Data: rq.Data}
 			}
 			fmt.Println("Done sending")
 		}()
@@ -49,22 +63,38 @@ func (mb *MessageBroadcaster) PublishMessage(rq *pb.MessageRequest) (*pb.Message
 }
 
 // ReadMessages creates a new listener channel for given queue, and sends unread messages to it.
-func (mb *MessageBroadcaster) ReadMessages(rq *pb.MessageStreamRequest, listener Listener) (Listener, error) {
-	msgs, err := mb.storage.GetByQueue(Queue(rq.Queue))
+func (mb *MessageBroadcaster) ReadMessages(listener *Listener) error {
+	msgs, err := mb.storage.GetByQueue(listener.Queue)
 	if err != nil {
-		return nil, fmt.Errorf("getting messages: %w", err)
+		return fmt.Errorf("getting messages: %w", err)
 	}
 
-	// listener := make(Listener)
 	go func() {
 		fmt.Println("Sending to new listener")
 		for _, msg := range msgs {
-			listener <- &pb.MessageStreamResponse{Id: msg.ID, Data: msg.Data}
+			listener.Chan <- &pb.MessageStreamResponse{Id: msg.ID, Data: msg.Data}
 		}
 		fmt.Println("Done sending")
 	}()
 
-	mb.listeners[Queue(rq.Queue)] = append(mb.listeners[Queue(rq.Queue)], listener)
+	mb.listeners[listener.Queue] = append(mb.listeners[listener.Queue], listener)
 
-	return listener, nil
+	return nil
+}
+
+func (mb *MessageBroadcaster) RemoveListener(listener *Listener) {
+	listeners, ok := mb.listeners[listener.Queue]
+	if !ok {
+		return
+	}
+	if len(listeners) == 1 {
+		delete(mb.listeners, listener.Queue)
+		return
+	}
+
+	for i, l := range listeners {
+		if l.ID == listener.ID {
+			mb.listeners[listener.Queue] = append(listeners[:i], listeners[i+1:]...)
+		}
+	}
 }
