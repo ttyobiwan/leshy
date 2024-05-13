@@ -9,9 +9,7 @@ import (
 
 type PerQueueDBs map[Queue]*sql.DB
 
-type DistributedSQLStorage struct {
-	dbs PerQueueDBs
-}
+type DistributedSQLStorage struct{ dbs PerQueueDBs }
 
 func NewDistributedSQLStorage() *DistributedSQLStorage {
 	return &DistributedSQLStorage{make(PerQueueDBs)}
@@ -23,7 +21,7 @@ func (dss *DistributedSQLStorage) Save(queue Queue, id string, data []byte) erro
 		return err
 	}
 
-	_, err = db.Exec("INSERT INTO messages (id) VALUES (?);", id)
+	_, err = db.Exec("INSERT INTO messages (id, data) VALUES (?, ?);", id, data)
 	if err != nil {
 		return fmt.Errorf("inserting message: %w", err)
 	}
@@ -37,7 +35,7 @@ func (dss *DistributedSQLStorage) GetByQueue(queue Queue) ([]Message, error) {
 		return nil, err
 	}
 
-	rows, err := db.Query("SELECT id FROM messages ORDER BY created_at ASC;")
+	rows, err := db.Query("SELECT id, data FROM messages ORDER BY created_at ASC;")
 	if err != nil {
 		return nil, fmt.Errorf("querying messages: %w", err)
 	}
@@ -46,7 +44,7 @@ func (dss *DistributedSQLStorage) GetByQueue(queue Queue) ([]Message, error) {
 	msgs := []Message{}
 	for rows.Next() {
 		var msg Message
-		err = rows.Scan(&msg.ID)
+		err = rows.Scan(&msg.ID, &msg.Data)
 		if err != nil {
 			return nil, fmt.Errorf("scanning row: %w", err)
 		}

@@ -12,11 +12,13 @@ var (
 	dbMigration = `
 CREATE TABLE IF NOT EXISTS messages (
 	id UUID PRIMARY KEY,
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	data BLOB
 );
 `
 )
 
+// GetDB connects to the SQLite database inside dbDir and executes the initial migration.
 func GetDB(name string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite3", fmt.Sprintf("%s/%s.db", dbDir, name))
 	if err != nil {

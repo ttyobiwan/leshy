@@ -11,3 +11,9 @@
 # Leshy
 
 DX-focused message queue, powered by Golang, SQLite and gRPC.
+
+## Next
+
+1. Acks for the main database
+2. Consumers (multiplying dbs, acks per specific listener)
+3. Fighting race conditions (+ blocking publishing when new listener is getting added)

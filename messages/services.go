@@ -2,6 +2,7 @@ package messages
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	pb "github.com/tobias-piotr/leshy/proto"
@@ -9,6 +10,7 @@ import (
 
 type Queue string
 
+// Listener is a representation of consumer for specific queue.
 type Listener struct {
 	ID    string
 	Queue Queue
@@ -23,6 +25,7 @@ func NewListener(queue Queue) *Listener {
 	}
 }
 
+// MessageBroadcaster is managing messages persistance and delivery to current listeners.
 type MessageBroadcaster struct {
 	storage   *DistributedSQLStorage
 	listeners map[Queue][]*Listener
@@ -48,6 +51,7 @@ func (mb *MessageBroadcaster) PublishMessage(rq *pb.MessageRequest) (*pb.Message
 	listeners, ok := mb.listeners[queue]
 	if ok {
 		go func() {
+			slog.Info("Publishing message to listeners", "id", id, "listeners", len(listeners))
 			for _, listener := range listeners {
 				listener.Chan <- &pb.MessageStreamResponse{Id: id, Data: rq.Data}
 			}
@@ -65,6 +69,7 @@ func (mb *MessageBroadcaster) ReadMessages(listener *Listener) error {
 	}
 
 	go func() {
+		slog.Info("Sending messages to new listener", "messages", len(msgs))
 		for _, msg := range msgs {
 			listener.Chan <- &pb.MessageStreamResponse{Id: msg.ID, Data: msg.Data}
 		}

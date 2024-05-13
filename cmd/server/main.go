@@ -40,6 +40,7 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 	}, 1)
 
 	go func() {
+		// Recv is blocking but it will raise an error when we make return on initialCtx
 		req, err := srv.Recv()
 		initialMsg <- struct {
 			queue string
