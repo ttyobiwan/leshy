@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://github.com/tobias-piotr/leshy/actions/workflows/ci.yaml/badge.svg?branch=main" alt="Test">
+  <img src="https://github.com/tobias-piotr/leshy/actions/workflows/ci.yml/badge.svg?branch=main" alt="Test">
   <img src="https://goreportcard.com/badge/github.com/tobias-piotr/leshy" alt="Report">
   <img src="https://gh.kaos.st/apache2.svg" alt="License">
 </p>

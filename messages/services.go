@@ -7,10 +7,7 @@ import (
 	pb "github.com/tobias-piotr/leshy/proto"
 )
 
-type (
-	Queue string
-	// Listener chan *pb.MessageStreamResponse
-)
+type Queue string
 
 type Listener struct {
 	ID    string
@@ -51,11 +48,9 @@ func (mb *MessageBroadcaster) PublishMessage(rq *pb.MessageRequest) (*pb.Message
 	listeners, ok := mb.listeners[queue]
 	if ok {
 		go func() {
-			fmt.Println("Sending to listeners")
 			for _, listener := range listeners {
 				listener.Chan <- &pb.MessageStreamResponse{Id: id, Data: rq.Data}
 			}
-			fmt.Println("Done sending")
 		}()
 	}
 
@@ -70,11 +65,9 @@ func (mb *MessageBroadcaster) ReadMessages(listener *Listener) error {
 	}
 
 	go func() {
-		fmt.Println("Sending to new listener")
 		for _, msg := range msgs {
 			listener.Chan <- &pb.MessageStreamResponse{Id: msg.ID, Data: msg.Data}
 		}
-		fmt.Println("Done sending")
 	}()
 
 	mb.listeners[listener.Queue] = append(mb.listeners[listener.Queue], listener)
@@ -82,6 +75,7 @@ func (mb *MessageBroadcaster) ReadMessages(listener *Listener) error {
 	return nil
 }
 
+// RemoveListener removes the listener channel from the list for given queue.
 func (mb *MessageBroadcaster) RemoveListener(listener *Listener) {
 	listeners, ok := mb.listeners[listener.Queue]
 	if !ok {

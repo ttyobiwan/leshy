@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"time"
 
 	"github.com/tobias-piotr/leshy/messages"
 	pb "github.com/tobias-piotr/leshy/proto"
@@ -29,15 +30,32 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 		if listener == nil {
 			return
 		}
+		slog.Info("Disconnecting listener", "id", listener.ID, "queue", listener.Queue)
 		s.broadcaster.RemoveListener(listener)
 	}()
 
-	// TODO: This select doesn't bring any value, Recv needs to be a channel
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
+	initialMsg := make(chan struct {
+		queue string
+		err   error
+	}, 1)
+
+	go func() {
 		req, err := srv.Recv()
+		initialMsg <- struct {
+			queue string
+			err   error
+		}{req.GetQueue(), err}
+	}()
+
+	initialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	select {
+	case <-initialCtx.Done():
+		return initialCtx.Err()
+	case msg := <-initialMsg:
+		close(initialMsg)
+		queue, err := msg.queue, msg.err
 		if err != nil {
 			if err == io.EOF {
 				return nil
@@ -45,7 +63,7 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 			return err
 		}
 
-		listener = messages.NewListener(messages.Queue(req.Queue))
+		listener = messages.NewListener(messages.Queue(queue))
 		err = s.broadcaster.ReadMessages(listener)
 		if err != nil {
 			return err
@@ -54,13 +72,13 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 
 	for {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case msg := <-listener.Chan:
 			err := srv.Send(msg)
 			if err != nil {
 				return fmt.Errorf("sending message: %w", err)
 			}
-		case <-ctx.Done():
-			return ctx.Err()
 		}
 	}
 }
