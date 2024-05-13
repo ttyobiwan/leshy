@@ -10,4 +10,4 @@
 
 # Leshy
 
-DX focused message queue, powered by Golang, SQLite and gRPC.
+DX-focused message queue, powered by Golang, SQLite and gRPC.

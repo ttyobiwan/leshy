@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package jobs;
+
+option go_package = "github.com/tobias-piotr/leshy/proto";
+
+service MessageService {
+    rpc PublishMessage(MessageRequest) returns (MessageResponse) {}
+	rpc ReadMessages(stream MessageStreamRequest) returns (stream MessageStreamResponse) {}
+}
+
+message MessageRequest {
+	string id = 1;
+	string queue = 2;
+	bytes data = 3;
+}
+
+message MessageResponse {
+	string id = 1;
+}
+
+message MessageStreamRequest {
+	string queue = 1;
+}
+
+message MessageStreamResponse {
+	string id = 1;
+	bytes data = 2;
+}
