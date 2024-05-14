@@ -63,6 +63,8 @@ func (mb *MessageBroadcaster) PublishMessage(rq *pb.MessageRequest) (*pb.Message
 
 // ReadMessages creates a new listener channel for given queue, and sends unread messages to it.
 func (mb *MessageBroadcaster) ReadMessages(listener *Listener) error {
+	slog.Info("Connecting new listener", "id", listener.ID, "queue", listener.Queue)
+
 	msgs, err := mb.storage.GetByQueue(listener.Queue)
 	if err != nil {
 		return fmt.Errorf("getting messages: %w", err)
@@ -80,6 +82,7 @@ func (mb *MessageBroadcaster) ReadMessages(listener *Listener) error {
 	return nil
 }
 
+// Ack updates the ack status in the database.
 func (mb *MessageBroadcaster) Ack(queue Queue, id string) error {
 	return mb.storage.Ack(queue, id)
 }
