@@ -13,7 +13,8 @@ var (
 CREATE TABLE IF NOT EXISTS messages (
 	id UUID PRIMARY KEY,
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	data BLOB
+	data BLOB,
+	acked BOOLEAN NOT NULL CHECK (acked IN (0, 1)) DEFAULT 0
 );
 `
 )

@@ -42,6 +42,7 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 	go func() {
 		// Recv is blocking but it will raise an error when we make return on initialCtx
 		req, err := srv.Recv()
+		fmt.Println("got something", err)
 		initialMsg <- struct {
 			queue string
 			err   error
@@ -71,6 +72,21 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 		}
 	}
 
+	acks := make(chan struct {
+		id  string
+		err error
+	})
+	go func() {
+		for {
+			// Same as in initial Recv
+			msg, err := srv.Recv()
+			acks <- struct {
+				id  string
+				err error
+			}{msg.GetId(), err}
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -79,6 +95,18 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 			err := srv.Send(msg)
 			if err != nil {
 				return fmt.Errorf("sending message: %w", err)
+			}
+		case ack := <-acks:
+			id, err := ack.id, ack.err
+			if err != nil {
+				if err == io.EOF {
+					return nil
+				}
+				return err
+			}
+			err = s.broadcaster.Ack(listener.Queue, id)
+			if err != nil {
+				return fmt.Errorf("acking message: %w", err)
 			}
 		}
 	}

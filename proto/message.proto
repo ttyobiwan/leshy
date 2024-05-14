@@ -21,6 +21,7 @@ message MessageResponse {
 
 message MessageStreamRequest {
 	string queue = 1;
+	string id = 2;
 }
 
 message MessageStreamResponse {

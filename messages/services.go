@@ -80,6 +80,10 @@ func (mb *MessageBroadcaster) ReadMessages(listener *Listener) error {
 	return nil
 }
 
+func (mb *MessageBroadcaster) Ack(queue Queue, id string) error {
+	return mb.storage.Ack(queue, id)
+}
+
 // RemoveListener removes the listener channel from the list for given queue.
 func (mb *MessageBroadcaster) RemoveListener(listener *Listener) {
 	listeners, ok := mb.listeners[listener.Queue]
