@@ -71,6 +71,29 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 		}
 	}
 
+	// Prepare acks thread
+	acks := make(chan struct {
+		id  string
+		err error
+	})
+	defer close(acks)
+
+	go func() {
+		for {
+			msg, err := srv.Recv()
+			select {
+			case <-acks:
+				return
+			default:
+				acks <- struct {
+					id  string
+					err error
+				}{msg.GetId(), err}
+			}
+		}
+	}()
+
+	// Receive published messages and acks
 	for {
 		select {
 		case <-ctx.Done():
@@ -79,6 +102,18 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 			err := srv.Send(msg)
 			if err != nil {
 				return fmt.Errorf("sending message: %w", err)
+			}
+		case ack := <-acks:
+			id, err := ack.id, ack.err
+			if err != nil {
+				if err == io.EOF {
+					return nil
+				}
+				return err
+			}
+			err = s.broadcaster.Ack(listener.Queue, id)
+			if err != nil {
+				return fmt.Errorf("acking message: %w", err)
 			}
 		}
 	}

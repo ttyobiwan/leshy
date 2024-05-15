@@ -22,7 +22,7 @@ func run() error {
 
 	client := pb.NewMessageServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 
 	stream, err := client.ReadMessages(ctx)
@@ -30,7 +30,10 @@ func run() error {
 		return fmt.Errorf("opening grpc stream: %w", err)
 	}
 
-	stream.Send(&pb.MessageStreamRequest{Queue: "tasks"})
+	err = stream.Send(&pb.MessageStreamRequest{Queue: "tasks"})
+	if err != nil {
+		return fmt.Errorf("sending initial message: %w", err)
+	}
 
 	for {
 		msg, err := stream.Recv()
@@ -41,6 +44,17 @@ func run() error {
 			return fmt.Errorf("receiving message: %w", err)
 		}
 		slog.Info("Received message", "msg", msg)
+
+		go func() {
+			slog.Info("Preparing to ack", "id", msg.Id)
+
+			err := stream.Send(&pb.MessageStreamRequest{Id: msg.Id})
+			if err != nil {
+				slog.Error("Error acking", "id", msg.Id, "err", err)
+			}
+
+			slog.Info("Done acking", "id", msg.Id)
+		}()
 	}
 }
 

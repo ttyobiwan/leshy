@@ -35,7 +35,7 @@ func (dss *DistributedSQLStorage) GetByQueue(queue Queue) ([]Message, error) {
 		return nil, err
 	}
 
-	rows, err := db.Query("SELECT id, data FROM messages ORDER BY created_at ASC;")
+	rows, err := db.Query("SELECT id, data FROM messages WHERE acked = 0 ORDER BY created_at ASC;")
 	if err != nil {
 		return nil, fmt.Errorf("querying messages: %w", err)
 	}
@@ -57,6 +57,20 @@ func (dss *DistributedSQLStorage) GetByQueue(queue Queue) ([]Message, error) {
 	}
 
 	return msgs, nil
+}
+
+func (dss *DistributedSQLStorage) Ack(queue Queue, id string) error {
+	db, err := dss.getOrAddDB(queue)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec("UPDATE messages SET acked = 1 WHERE id = ?;", id)
+	if err != nil {
+		return fmt.Errorf("updating message: %w", err)
+	}
+
+	return nil
 }
 
 func (dss *DistributedSQLStorage) getOrAddDB(queue Queue) (*sql.DB, error) {

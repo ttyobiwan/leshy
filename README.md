@@ -12,8 +12,19 @@
 
 DX-focused message queue, powered by Golang, SQLite and gRPC.
 
+## Setting up
+
+Generating protobuffs:
+
+```bash
+protoc --go_out=. --go_opt=paths=source_relative \
+    --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+    proto/*.proto
+```
+
 ## Next
 
 1. Acks for the main database
 2. Consumers (multiplying dbs, acks per specific listener)
 3. Fighting race conditions (+ blocking publishing when new listener is getting added)
+4. Cleaner thread 
