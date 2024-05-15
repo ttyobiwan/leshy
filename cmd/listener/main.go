@@ -30,7 +30,7 @@ func run() error {
 		return fmt.Errorf("opening grpc stream: %w", err)
 	}
 
-	err = stream.Send(&pb.MessageStreamRequest{Queue: "tasks"})
+	err = stream.Send(&pb.MessageStreamRequest{Queue: "tasks", Consumer: "listener4"})
 	if err != nil {
 		return fmt.Errorf("sending initial message: %w", err)
 	}

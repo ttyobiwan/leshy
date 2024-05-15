@@ -21,7 +21,8 @@ message MessageResponse {
 
 message MessageStreamRequest {
 	string queue = 1;
-	string id = 2;
+	string consumer = 2;
+	string id = 3;
 }
 
 message MessageStreamResponse {
