@@ -8,19 +8,24 @@ import (
 	pb "github.com/tobias-piotr/leshy/proto"
 )
 
-type Queue string
+type (
+	Queue    string
+	Consumer string
+)
 
 // Listener is a representation of consumer for specific queue.
 type Listener struct {
-	ID    string
-	Queue Queue
-	Chan  chan *pb.MessageStreamResponse
+	ID       string
+	Queue    Queue
+	Consumer Consumer
+	Chan     chan *pb.MessageStreamResponse
 }
 
-func NewListener(queue Queue) *Listener {
+func NewListener(queue Queue, consumer Consumer) *Listener {
 	return &Listener{
 		uuid.New().String(),
 		queue,
+		consumer,
 		make(chan *pb.MessageStreamResponse),
 	}
 }
@@ -43,7 +48,7 @@ func (mb *MessageBroadcaster) PublishMessage(rq *pb.MessageRequest) (*pb.Message
 	id := uuid.New().String()
 	queue := Queue(rq.Queue)
 
-	err := mb.storage.Save(queue, id, rq.Data)
+	err := mb.storage.Insert(queue, id, rq.Data)
 	if err != nil {
 		return nil, fmt.Errorf("saving message: %w", err)
 	}
@@ -65,7 +70,7 @@ func (mb *MessageBroadcaster) PublishMessage(rq *pb.MessageRequest) (*pb.Message
 func (mb *MessageBroadcaster) ReadMessages(listener *Listener) error {
 	slog.Info("Connecting new listener", "id", listener.ID, "queue", listener.Queue)
 
-	msgs, err := mb.storage.GetByQueue(listener.Queue)
+	msgs, err := mb.storage.GetAll(listener.Queue, listener.Consumer)
 	if err != nil {
 		return fmt.Errorf("getting messages: %w", err)
 	}
@@ -83,12 +88,13 @@ func (mb *MessageBroadcaster) ReadMessages(listener *Listener) error {
 }
 
 // Ack updates the ack status in the database.
-func (mb *MessageBroadcaster) Ack(queue Queue, id string) error {
-	return mb.storage.Ack(queue, id)
+func (mb *MessageBroadcaster) Ack(listener *Listener, id string) error {
+	return mb.storage.Ack(listener.Queue, listener.Consumer, id)
 }
 
 // RemoveListener removes the listener channel from the list for given queue.
 func (mb *MessageBroadcaster) RemoveListener(listener *Listener) {
+	// TODO: Dettach dbs as well
 	listeners, ok := mb.listeners[listener.Queue]
 	if !ok {
 		return

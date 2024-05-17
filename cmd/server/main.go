@@ -26,26 +26,29 @@ func (s *server) PublishMessage(ctx context.Context, in *pb.MessageRequest) (*pb
 func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 	ctx := srv.Context()
 	var listener *messages.Listener
+
 	defer func() {
 		if listener == nil {
 			return
 		}
-		slog.Info("Disconnecting listener", "id", listener.ID, "queue", listener.Queue)
+		slog.Info("Disconnecting listener", "id", listener.ID, "queue", listener.Queue, "consumer", listener.Consumer)
 		s.broadcaster.RemoveListener(listener)
 	}()
 
 	initialMsg := make(chan struct {
-		queue string
-		err   error
+		queue    string
+		consumer string
+		err      error
 	}, 1)
 
 	go func() {
 		// Recv is blocking but it will raise an error when we make return on initialCtx
 		req, err := srv.Recv()
 		initialMsg <- struct {
-			queue string
-			err   error
-		}{req.GetQueue(), err}
+			queue    string
+			consumer string
+			err      error
+		}{req.GetQueue(), req.GetConsumer(), err}
 	}()
 
 	initialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -53,10 +56,11 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 
 	select {
 	case <-initialCtx.Done():
+		slog.Error("Listener timed out on the first message")
 		return initialCtx.Err()
 	case msg := <-initialMsg:
 		close(initialMsg)
-		queue, err := msg.queue, msg.err
+		queue, consumer, err := msg.queue, msg.consumer, msg.err
 		if err != nil {
 			if err == io.EOF {
 				return nil
@@ -64,7 +68,7 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 			return err
 		}
 
-		listener = messages.NewListener(messages.Queue(queue))
+		listener = messages.NewListener(messages.Queue(queue), messages.Consumer(consumer))
 		err = s.broadcaster.ReadMessages(listener)
 		if err != nil {
 			return err
@@ -111,7 +115,7 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 				}
 				return err
 			}
-			err = s.broadcaster.Ack(listener.Queue, id)
+			err = s.broadcaster.Ack(listener, id)
 			if err != nil {
 				return fmt.Errorf("acking message: %w", err)
 			}
