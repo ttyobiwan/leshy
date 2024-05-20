@@ -94,7 +94,6 @@ func (mb *MessageBroadcaster) Ack(listener *Listener, id string) error {
 
 // RemoveListener removes the listener channel from the list for given queue.
 func (mb *MessageBroadcaster) RemoveListener(listener *Listener) {
-	// TODO: Dettach dbs as well
 	listeners, ok := mb.listeners[listener.Queue]
 	if !ok {
 		return

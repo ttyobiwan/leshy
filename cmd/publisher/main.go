@@ -27,7 +27,7 @@ func run() error {
 
 	data := map[string]any{"number": 1, "text": "test"}
 	b, _ := json.Marshal(data)
-	msg := pb.MessageRequest{Queue: "tasks", Data: b}
+	msg := pb.MessageRequest{Queue: "jobs", Data: b}
 
 	resp, err := client.PublishMessage(ctx, &msg)
 	if err != nil {
