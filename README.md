@@ -21,10 +21,3 @@ protoc --go_out=. --go_opt=paths=source_relative \
     --go-grpc_out=. --go-grpc_opt=paths=source_relative \
     proto/*.proto
 ```
-
-## Next
-
-1. Acks for the main database
-2. Consumers (multiplying dbs, acks per specific listener)
-3. Fighting race conditions (+ blocking publishing when new listener is getting added), fighting with mutexes
-4. Cleaner thread (give connections TTL, maybe something like LRU)

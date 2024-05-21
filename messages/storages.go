@@ -5,26 +5,88 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/tobias-piotr/leshy/internal/sqlite"
 )
 
-type DBsMap map[Queue]map[Consumer]*sql.DB
-
-type DistributedSQLStorage struct{ dbs DBsMap }
-
-func NewDistributedSQLStorage() *DistributedSQLStorage {
-	return &DistributedSQLStorage{make(DBsMap)}
+// Connection represents a database connection, with a life time limit.
+type Connection struct {
+	DB  *sql.DB
+	TTL time.Time
 }
 
+// IncreaseTTL extends the TTL by a predefined amount of time.
+func (c *Connection) IncreaseTTL() {
+	c.TTL = time.Now().Add(5 * time.Minute)
+}
+
+// ConnectionMap is thread-safe map, that managed Connection objects, with their ttls.
+type ConnectionMap struct {
+	connMap map[Queue]map[Consumer]*Connection
+	mu      sync.RWMutex
+}
+
+func NewConnectionMap() *ConnectionMap {
+	return &ConnectionMap{connMap: make(map[Queue]map[Consumer]*Connection)}
+}
+
+func (m *ConnectionMap) Set(queue Queue, consumer Consumer, conn *Connection) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.connMap[queue]
+	if !ok {
+		m.connMap[queue] = make(map[Consumer]*Connection)
+	}
+	m.connMap[queue][consumer] = conn
+}
+
+func (m *ConnectionMap) SetMany(queue Queue, conns map[Consumer]*Connection) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.connMap[queue]
+	if !ok {
+		m.connMap[queue] = make(map[Consumer]*Connection)
+	}
+	for consumer, conn := range conns {
+		m.connMap[queue][consumer] = conn
+	}
+}
+
+func (m *ConnectionMap) Get(queue Queue, consumer Consumer) *Connection {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	queueMap, ok := m.connMap[queue]
+	if !ok {
+		return nil
+	}
+	conn := queueMap[consumer]
+	if conn == nil {
+		return nil
+	}
+	// Increase ttl
+	// Technically speaking we are bypassing the write lock,
+	// but this race condition is not dangerous (for now)
+	conn.IncreaseTTL()
+	return conn
+}
+
+type DistributedSQLStorage struct{ connMap *ConnectionMap }
+
+func NewDistributedSQLStorage() *DistributedSQLStorage {
+	return &DistributedSQLStorage{NewConnectionMap()}
+}
+
+// Insert saves the message in every database for given queue.
 func (dss *DistributedSQLStorage) Insert(queue Queue, id string, data []byte) error {
-	dbs, err := dss.getQueueDBs(queue)
+	conns, err := dss.getQueueConns(queue)
 	if err != nil {
 		return fmt.Errorf("getting queue dbs: %w", err)
 	}
 
-	for _, db := range dbs {
-		_, err = db.Exec("INSERT INTO messages (id, data) VALUES (?, ?);", id, data)
+	for _, conn := range conns {
+		_, err = conn.DB.Exec("INSERT INTO messages (id, data) VALUES (?, ?);", id, data)
 		if err != nil {
 			return fmt.Errorf("inserting message: %w", err)
 		}
@@ -33,13 +95,14 @@ func (dss *DistributedSQLStorage) Insert(queue Queue, id string, data []byte) er
 	return nil
 }
 
+// GetAll retrieves all the messages for given queue + consumer combination.
 func (dss *DistributedSQLStorage) GetAll(queue Queue, consumer Consumer) ([]Message, error) {
-	db, err := dss.getConsumerDB(queue, consumer)
+	conn, err := dss.getConsumerConn(queue, consumer)
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := db.Query("SELECT id, data FROM messages WHERE acked = 0 ORDER BY created_at ASC;")
+	rows, err := conn.DB.Query("SELECT id, data FROM messages WHERE acked = 0 ORDER BY created_at ASC;")
 	if err != nil {
 		return nil, fmt.Errorf("querying messages: %w", err)
 	}
@@ -63,13 +126,14 @@ func (dss *DistributedSQLStorage) GetAll(queue Queue, consumer Consumer) ([]Mess
 	return msgs, nil
 }
 
+// Ack updates the acked status for message with given id, in database for specific queue + consumer combination.
 func (dss *DistributedSQLStorage) Ack(queue Queue, consumer Consumer, id string) error {
-	db, err := dss.getConsumerDB(queue, consumer)
+	conn, err := dss.getConsumerConn(queue, consumer)
 	if err != nil {
 		return err
 	}
 
-	_, err = db.Exec("UPDATE messages SET acked = 1 WHERE id = ?;", id)
+	_, err = conn.DB.Exec("UPDATE messages SET acked = 1 WHERE id = ?;", id)
 	if err != nil {
 		return fmt.Errorf("updating message: %w", err)
 	}
@@ -78,7 +142,7 @@ func (dss *DistributedSQLStorage) Ack(queue Queue, consumer Consumer, id string)
 }
 
 // getQueueDBs gets connection for each database (consumer) for given queue.
-func (dss *DistributedSQLStorage) getQueueDBs(queue Queue) ([]*sql.DB, error) {
+func (dss *DistributedSQLStorage) getQueueConns(queue Queue) (map[Consumer]*Connection, error) {
 	// Get filenames for given queue
 	filenames, err := sqlite.GetDBFilenames(string(queue))
 	if err != nil {
@@ -88,65 +152,66 @@ func (dss *DistributedSQLStorage) getQueueDBs(queue Queue) ([]*sql.DB, error) {
 	// If there are no files, it means it is a new queue
 	if len(filenames) == 0 {
 		filenames = append(filenames, string(queue))
-		dss.dbs[queue] = make(map[Consumer]*sql.DB)
 	}
 
-	dbs := make([]*sql.DB, len(filenames))
-
-	// Get DB connection for each filename
-	for i, f := range filenames {
+	// Get connection for each file
+	// If connection is present in the map, use it
+	conns := make(map[Consumer]*Connection, len(filenames))
+	for _, f := range filenames {
 		dbName := strings.Split(f, ".db")[0]
-		db, ok := dss.dbs[queue][Consumer(dbName)]
-		if !ok {
-			db, err = sqlite.GetDB(string(queue), dbName, false)
+		// TODO: Maybe would also make sense to GetMany
+		conn := dss.connMap.Get(queue, Consumer(dbName))
+		if conn == nil {
+			db, err := sqlite.GetDB(string(queue), dbName, false)
 			if err != nil {
 				return nil, fmt.Errorf("getting db: %w", err)
 			}
-			dss.dbs[queue][Consumer(dbName)] = db
+			ttl := time.Now().Add(5 * time.Minute)
+			conn = &Connection{db, ttl}
 		}
-		dbs[i] = db
+		conns[Consumer(dbName)] = conn
 	}
+	// TODO: Potential unnecessary assignments, because some connections might already be there (retrieved by Get)
+	dss.connMap.SetMany(queue, conns)
 
-	return dbs, nil
+	return conns, nil
 }
 
-func (dss *DistributedSQLStorage) getConsumerDB(queue Queue, consumer Consumer) (*sql.DB, error) {
+func (dss *DistributedSQLStorage) getConsumerConn(queue Queue, consumer Consumer) (*Connection, error) {
 	// Default consumer to queue name (main)
 	if consumer == "" {
 		consumer = Consumer(queue)
 	}
 
 	// Get preused connection
-	dbsPerQueue, ok := dss.dbs[queue]
-	if ok {
-		db, ok := dbsPerQueue[consumer]
-		if ok {
-			return db, nil
-		}
-	} else {
-		dss.dbs[queue] = make(map[Consumer]*sql.DB)
+	conn := dss.connMap.Get(queue, consumer)
+	if conn != nil {
+		return conn, nil
 	}
 
-	// Get consumer connection
+	// Get a new consumer connection
 	db, err := sqlite.GetDB(string(queue), string(consumer), true)
 	if err != nil {
 		return nil, fmt.Errorf("getting db: %w", err)
 	}
-	dss.dbs[queue][consumer] = db
+	ttl := time.Now().Add(5 * time.Minute)
+	conn = &Connection{db, ttl}
+	dss.connMap.Set(queue, consumer, conn)
 
-	// If we use main, no need to do anything else
+	// If this is a main connection, then no need to do anything else
 	if consumer == Consumer(queue) {
-		return db, nil
+		return conn, nil
 	}
 
-	// Get main connection
-	mainDB, ok := dss.dbs[queue][Consumer(queue)]
-	if !ok {
-		mainDB, err = sqlite.GetDB(string(queue), string(queue), false)
+	// Get main connection, and save it in the map
+	mainConn := dss.connMap.Get(queue, Consumer(queue))
+	if mainConn == nil {
+		db, err := sqlite.GetDB(string(queue), string(queue), false)
 		if err != nil {
 			return nil, fmt.Errorf("getting main db: %w", err)
 		}
-		dss.dbs[queue][Consumer(queue)] = mainDB
+		mainConn = &Connection{db, ttl}
+		dss.connMap.Set(queue, Consumer(queue), mainConn)
 	}
 
 	// Check if consumer db is empty
@@ -156,15 +221,16 @@ func (dss *DistributedSQLStorage) getConsumerDB(queue Queue, consumer Consumer) 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("scanning row: %w", err)
 	}
+	// If not, then consumer db is good to go
 	if v == 1 {
-		return db, nil
+		return conn, nil
 	}
 
-	// Copy main to consumer
-	err = sqlite.CopyDB(mainDB, string(queue), string(consumer))
+	// If consumer is empty, then it's (most likely) new, so we copy data from main
+	err = sqlite.CopyDB(mainConn.DB, string(queue), string(consumer))
 	if err != nil {
 		return nil, fmt.Errorf("copying main to consumer: %w", err)
 	}
 
-	return db, nil
+	return conn, nil
 }
