@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/signal"
 	"time"
 
 	"github.com/tobias-piotr/leshy/messages"
@@ -123,25 +124,43 @@ func (s *server) ReadMessages(srv pb.MessageService_ReadMessagesServer) error {
 	}
 }
 
-func run() error {
+func run(ctx context.Context) error {
+	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
+	defer cancel()
+
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		return fmt.Errorf("listening: %w", err)
 	}
 
-	s := grpc.NewServer()
-	pb.RegisterMessageServiceServer(s, &server{broadcaster: messages.NewMessageBroadcaster()})
+	connMap := messages.NewConnectionMap()
 
-	slog.Info("Starting gRPC server", "addr", lis.Addr())
-	if err := s.Serve(lis); err != nil {
-		return fmt.Errorf("serving: %w", err)
-	}
+	s := grpc.NewServer()
+	pb.RegisterMessageServiceServer(
+		s,
+		&server{broadcaster: messages.NewMessageBroadcaster(messages.NewDistributedSQLStorage(connMap))},
+	)
+
+	go func() {
+		slog.Info("Starting cleaner")
+		cleaner := messages.NewCleaner(connMap)
+		if err := cleaner.Start(ctx); err != nil {
+			slog.Error("Error starting cleaner", "error", err)
+		}
+	}()
+
+	go func() {
+		slog.Info("Starting gRPC server", "addr", lis.Addr())
+		if err := s.Serve(lis); err != nil {
+			slog.Error("Error starting gRPC server", "error", err)
+		}
+	}()
 
 	return nil
 }
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(context.Background()); err != nil {
 		slog.Error("Error starting gRPC server", "err", err)
 		os.Exit(1)
 	}

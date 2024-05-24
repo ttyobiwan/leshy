@@ -36,9 +36,9 @@ type MessageBroadcaster struct {
 	listeners map[Queue][]*Listener
 }
 
-func NewMessageBroadcaster() *MessageBroadcaster {
+func NewMessageBroadcaster(storage *DistributedSQLStorage) *MessageBroadcaster {
 	return &MessageBroadcaster{
-		storage:   NewDistributedSQLStorage(),
+		storage:   storage,
 		listeners: make(map[Queue][]*Listener),
 	}
 }

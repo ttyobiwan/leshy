@@ -11,6 +11,8 @@ import (
 	"github.com/tobias-piotr/leshy/internal/sqlite"
 )
 
+var defaultTTL = 1 * time.Minute
+
 // Connection represents a database connection, with a life time limit.
 type Connection struct {
 	DB  *sql.DB
@@ -19,10 +21,10 @@ type Connection struct {
 
 // IncreaseTTL extends the TTL by a predefined amount of time.
 func (c *Connection) IncreaseTTL() {
-	c.TTL = time.Now().Add(5 * time.Minute)
+	c.TTL = time.Now().Add(defaultTTL)
 }
 
-// ConnectionMap is thread-safe map, that managed Connection objects, with their ttls.
+// ConnectionMap is thread-safe map, that manages Connection objects, with their ttls.
 type ConnectionMap struct {
 	connMap map[Queue]map[Consumer]*Connection
 	mu      sync.RWMutex
@@ -57,6 +59,7 @@ func (m *ConnectionMap) SetMany(queue Queue, conns map[Consumer]*Connection) {
 func (m *ConnectionMap) Get(queue Queue, consumer Consumer) *Connection {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
 	queueMap, ok := m.connMap[queue]
 	if !ok {
 		return nil
@@ -72,10 +75,36 @@ func (m *ConnectionMap) Get(queue Queue, consumer Consumer) *Connection {
 	return conn
 }
 
+func (m *ConnectionMap) Clean() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+	removedCount := 0
+
+	for queue, consMap := range m.connMap {
+		for consumer, conn := range consMap {
+			if conn.TTL.After(now) {
+				continue
+			}
+			removedCount++
+			// If there is only one connection, delete the map for the queue
+			if len(consMap) == 1 {
+				delete(m.connMap, queue)
+				continue
+			}
+			// Remove the connection for given consumer
+			delete(consMap, consumer)
+		}
+	}
+
+	return removedCount
+}
+
 type DistributedSQLStorage struct{ connMap *ConnectionMap }
 
-func NewDistributedSQLStorage() *DistributedSQLStorage {
-	return &DistributedSQLStorage{NewConnectionMap()}
+func NewDistributedSQLStorage(connMap *ConnectionMap) *DistributedSQLStorage {
+	return &DistributedSQLStorage{connMap}
 }
 
 // Insert saves the message in every database for given queue.
@@ -166,7 +195,7 @@ func (dss *DistributedSQLStorage) getQueueConns(queue Queue) (map[Consumer]*Conn
 			if err != nil {
 				return nil, fmt.Errorf("getting db: %w", err)
 			}
-			ttl := time.Now().Add(5 * time.Minute)
+			ttl := time.Now().Add(defaultTTL)
 			conn = &Connection{db, ttl}
 		}
 		conns[Consumer(dbName)] = conn
@@ -194,7 +223,7 @@ func (dss *DistributedSQLStorage) getConsumerConn(queue Queue, consumer Consumer
 	if err != nil {
 		return nil, fmt.Errorf("getting db: %w", err)
 	}
-	ttl := time.Now().Add(5 * time.Minute)
+	ttl := time.Now().Add(defaultTTL)
 	conn = &Connection{db, ttl}
 	dss.connMap.Set(queue, consumer, conn)
 
